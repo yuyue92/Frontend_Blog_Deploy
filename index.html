@@ -120,6 +120,73 @@
             border-left-color: #40a9ff;
         }
 
+        .menu-item.disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Toast 消息（替代顶部状态条提示） */
+        .toast-container {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: min(360px, calc(100vw - 28px));
+        }
+
+        .toast {
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 12px;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.25);
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            animation: toast-in 0.18s ease-out;
+        }
+
+        @keyframes toast-in {
+            from { transform: translateY(-6px); opacity: 0; }
+            to   { transform: translateY(0); opacity: 1; }
+        }
+
+        .toast .dot {
+            width: 10px;
+            height: 10px;
+            margin-top: 4px;
+            border-radius: 50%;
+            background: #1890ff;
+            flex: 0 0 auto;
+        }
+
+        .toast.success .dot { background: #52c41a; }
+        .toast.error .dot { background: #ff4d4f; }
+        .toast.info .dot { background: #1890ff; }
+
+        .toast .content {
+            font-size: 13px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .toast .close {
+            margin-left: auto;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.75);
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+
+        .toast .close:hover { color: #fff; }
+
         /* 右侧内容区 */
         .content-area {
             flex: 1;
@@ -567,7 +634,7 @@
 
         <!-- 右侧内容区 -->
         <div class="content-area">
-            <div id="alertBox" class="alert"></div>
+            <div id="toastContainer" class="toast-container"></div>
 
             <!-- 首页 -->
             <div id="homePage" class="page">
@@ -891,6 +958,12 @@
 
             /* ===== 页面切换 ===== */
             showPage: function (page) {
+                // 未登录时：禁用需要登录的页面，并停留在登录页
+                var protectedPages = ['home', 'myPosts', 'createPost', 'test'];
+                if (!this.token && protectedPages.indexOf(page) !== -1) {
+                    this.showToast('error', '请先登录');
+                    page = 'login';
+                }
                 // 基础切页：不做 async，避免把旧内容留在页面上太久
                 document.querySelectorAll('.page').forEach(function (p) {
                     p.classList.add('hidden');
@@ -931,32 +1004,65 @@
             },
 
             showAlert: function (type, message) {
-                var alert = document.getElementById('alertBox');
-                alert.className = 'alert alert-' + type + ' show';
-                alert.textContent = message;
+                // 兼容旧调用：统一走 Toast 弹框
+                this.showToast(type, message);
+            },
+
+            showToast: function (type, message) {
+                var container = document.getElementById('toastContainer');
+                if (!container) return;
+
+                var toast = document.createElement('div');
+                toast.className = 'toast ' + (type || 'info');
+
+                var dot = document.createElement('div');
+                dot.className = 'dot';
+
+                var content = document.createElement('div');
+                content.className = 'content';
+                content.textContent = message || '';
+
+                var close = document.createElement('button');
+                close.className = 'close';
+                close.setAttribute('aria-label', '关闭');
+                close.innerHTML = '×';
+                close.onclick = function () {
+                    if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
+                };
+
+                toast.appendChild(dot);
+                toast.appendChild(content);
+                toast.appendChild(close);
+
+                container.appendChild(toast);
+
                 setTimeout(function () {
-                    alert.classList.remove('show');
-                }, 4500);
+                    if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
+                }, 3200);
             },
 
             updateAuthMenus: function () {
-                // 登录后：隐藏“登录/注册”，展示“我的文章/发布文章”并保持菜单整洁
+                // 登录后：隐藏“登录/注册”；未登录：禁用需要登录的页面入口并停留在登录页
                 var isAuthed = !!this.token;
                 var mLogin = document.getElementById('menuLogin');
                 var mReg = document.getElementById('menuRegister');
-                var mMy = document.getElementById('menuMyPosts');
-                var mCreate = document.getElementById('menuCreatePost');
+
+                var protectedPages = ['home', 'myPosts', 'createPost', 'test'];
+
+                // 处理菜单禁用态
+                protectedPages.forEach(function (p) {
+                    var item = document.querySelector('[data-page="' + p + '"]');
+                    if (!item) return;
+                    if (isAuthed) item.classList.remove('disabled');
+                    else item.classList.add('disabled');
+                });
 
                 if (isAuthed) {
                     mLogin.classList.add('hidden');
                     mReg.classList.add('hidden');
-                    mMy.classList.remove('hidden');
-                    mCreate.classList.remove('hidden');
                 } else {
                     mLogin.classList.remove('hidden');
                     mReg.classList.remove('hidden');
-                    mMy.classList.remove('hidden');       // 允许未登录进入，内部会提示
-                    mCreate.classList.remove('hidden');   // 允许未登录进入，内部会提示
                 }
             },
 
@@ -1072,7 +1178,7 @@
                 this.updateUserDisplay();
                 this.updateAuthMenus();
                 if (!silent) this.showAlert('success', '已退出登录');
-                this.showPage('home');
+                this.showPage('login');
             },
 
             /* ===== 列表：文章 + 分页 + 评论数 ===== */
