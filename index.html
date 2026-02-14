@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>个人博客管理系统</title>
+    <title>yy3个人博客管理系统</title>
     <style>
         * {
             margin: 0;
@@ -748,8 +748,9 @@
                         <select id="myPageSize" onchange="app.setPageSize('my', this.value)"
                             style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:12px;">
                             <option value="5">5</option>
-                            <option value="8" selected>8</option>
-                            <option value="12">12</option>
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
                         </select>
                     </div>
                 </div>
@@ -858,7 +859,7 @@
             // 列表数据与分页（前端分页：兼容后端不支持分页的场景）
             state: {
                 home: { all: [], page: 1, pageSize: 10, total: 0, totalPage: 1 },
-                my: { all: [], page: 1, pageSize: 8, total: 0 }
+                my: { all: [], page: 1, pageSize: 10, total: 0, totalPage: 1 }
             },
 
             // 全局 loading 计数（避免并发请求闪烁）
@@ -1013,9 +1014,19 @@
 
                 if (page === 'myPosts') {
                     this.lastListPage = 'myPosts';
+                    // 同步选择器的值
+                    var myPageSizeSelect = document.getElementById('myPageSize');
+                    if (myPageSizeSelect) {
+                        myPageSizeSelect.value = this.state.my.pageSize || 10;
+                    }
                     this.fetchMyPosts({ silent: false });
                 } else if (page === 'home') {
                     this.lastListPage = 'home';
+                    // 同步选择器的值
+                    var homePageSizeSelect = document.getElementById('homePageSize');
+                    if (homePageSizeSelect) {
+                        homePageSizeSelect.value = this.state.home.pageSize || 10;
+                    }
                     this.fetchPosts({ silent: false });
                 }
             },
@@ -1206,7 +1217,7 @@
 
             /* ===== 列表：文章 + 分页 + 评论数 ===== */
             setPageSize: function (which, size) {
-                size = parseInt(size, 10) || 8;
+                size = parseInt(size, 10) || 10;
                 if (which === 'home') {
                     this.state.home.pageSize = size;
                     this.state.home.page = 1;   // 切换每页条数时回到第一页
@@ -1214,7 +1225,7 @@
                 } else {
                     this.state.my.pageSize = size;
                     this.state.my.page = 1;
-                    this.renderList('my');
+                    this.fetchMyPosts({ silent: false });  // ⭐ 关键修复：改为请求后端
                 }
             },
 
@@ -1278,25 +1289,67 @@
 
                 container.innerHTML = '<div class="empty-state"><div style="font-size: 38px;">⏳</div><p>正在加载我的文章...</p></div>';
 
-                return this.requestJson(this.apiBase + '/posts', {
-                    headers: { 'Authorization': 'Bearer ' + this.token }
-                }, opt.silent ? null : '正在加载我的文章...')
-                    .then(function (data) {
-                        if (data.code === 200) {
-                            var all = (data.data && data.data.posts) ? data.data.posts : [];
-                            var myPosts = all.filter(function (post) {
-                                return self.user && post.user_id === self.user.id;
-                            });
-                            self.state.my.all = myPosts;
-                            self.state.my.total = myPosts.length;
-                            self.state.my.page = 1;
-                            document.getElementById('myCount').textContent = '共 ' + self.state.my.total + ' 篇';
-                            document.getElementById('mySubTitle').textContent = self.state.my.total ? ('最后更新：' + new Date().toLocaleTimeString()) : '暂无内容';
-                            self.renderList('my');
-                            self.updateCommentBadgesForList('my');
+                var page = self.state.my.page || 1;
+                var pageSize = self.state.my.pageSize || 10;
+                // 定义一个函数来递归获取所有文章
+                function fetchAllPosts(currentPage, allPosts) {
+                    var fetchPageSize = 100; // 每次请求100条，减少请求次数
+                    return self.requestJson(self.apiBase + '/posts?page=' + currentPage + '&page_size=' + fetchPageSize, {
+                        headers: { 'Authorization': 'Bearer ' + self.token }
+                    }, null)
+                        .then(function (data) {
+                            if (data.code === 200 && data.data && data.data.posts) {
+                                var posts = data.data.posts;
+                                allPosts = allPosts.concat(posts);
+
+                                var pagination = data.data.pagination || {};
+                                // 如果还有更多页，继续请求
+                                if (currentPage < (pagination.total_page || 1)) {
+                                    return fetchAllPosts(currentPage + 1, allPosts);
+                                } else {
+                                    return allPosts;
+                                }
+                            } else {
+                                return allPosts;
+                            }
+                        });
+                }
+
+                // 从第一页开始获取所有文章
+                return fetchAllPosts(1, [])
+                    .then(function (allPosts) {
+                        // 过滤出当前用户的所有文章
+                        var allMyPosts = allPosts.filter(function (post) {
+                            return self.user && post.user_id === self.user.id;
+                        });
+                        // 计算总数和总页数
+                        var myTotal = allMyPosts.length;
+                        var myTotalPages = Math.ceil(myTotal / pageSize) || 1;
+
+                        // 确保当前页不超过总页数
+                        if (page > myTotalPages) {
+                            page = myTotalPages;
+                            self.state.my.page = page;
                         }
-                    })
-                    .catch(function () {
+
+                        // 前端分页：从所有我的文章中截取当前页
+                        var startIndex = (page - 1) * pageSize;
+                        var endIndex = startIndex + pageSize;
+                        var myPostsCurrentPage = allMyPosts.slice(startIndex, endIndex);
+
+                        self.state.my.all = myPostsCurrentPage;
+                        self.state.my.total = myTotal;
+                        self.state.my.page = page;
+                        self.state.my.pageSize = pageSize;
+                        self.state.my.totalPage = myTotalPages;
+
+                        document.getElementById('myCount').textContent = '共 ' + myTotal + ' 篇';
+                        document.getElementById('mySubTitle').textContent = myTotal ? ('第 ' + page + ' / ' + myTotalPages + ' 页') : '暂无内容';
+
+                        self.renderList('my');
+                        self.updateCommentBadgesForList('my');
+                    }).catch(function (err) {
+                        console.error('fetchMyPosts error:', err);
                         self.showAlert('error', '获取我的文章失败');
                     });
             },
@@ -1322,7 +1375,7 @@
 
                 var slice = posts; // 后端已分页，直接使用当前页数据
 
-                container.innerHTML = slice.map(function (post,postIndex) {
+                container.innerHTML = slice.map(function (post, postIndex) {
                     var showActions = (which === 'my');
                     var actions = '';
                     if (showActions && self.user && post.user_id === self.user.id) {
@@ -1394,8 +1447,7 @@
                     this.fetchPosts({ silent: false });
                 } else {
                     this.state.my.page = page;
-                    this.renderList('my');
-                    this.updateCommentBadgesForList('my', { onlyVisible: true });
+                    this.fetchMyPosts({ silent: false });  // ⭐ 改为请求后端
                 }
                 // 切页时不需要全屏 loading，视觉更顺滑
             },
